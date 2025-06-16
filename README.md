@@ -1,4 +1,14 @@
 # qc_scale_tool
-#### Powershell tool that applies $scale to a QC and VRD and changes all calculations to work with it so you don't have to do it yourself
+#### Powershell tool that applies $scale to a QC and VRD and changes all calculations to work with it
+#### Never sacrifice jigglebones and procedural helpers ever again because you need to scale an SFM model
 
-Place in the same directory as your QC and VRD files, follow on-screen prompts. Its very idiot-proof.
+
+## Instructions:
+1. Place in the same directory as your QC and VRD files, right click > Run with Powershell.
+2. Follow the on-screen prompts to select your file and options, the tool does all the work.
+3. Compile and enjoy your newely scaled model produced in literally 10 seconds.
+
+# Notes:
+The tool will detect and warn you about VTA files and EyeRadius, both of which cannot be scaled.
+
+Be sure your VRD file has the correct calculations for the current scale your QC is set to!
