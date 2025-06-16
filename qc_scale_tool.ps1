@@ -820,187 +820,102 @@ if ($resp -eq 'y') {
 }
 
 # -----------------------------
-# 5) If no VRD or skipped, exit (proceed to optional rename prompt)
+# 5) Process VRD if present
 # -----------------------------
 if (-not $hasVrd) {
     Write-Host "`n QC updated; no VRD was processed."
 } else {
-    # ----------------------------------------
-    # 6) Process VRD (in place) – handling both <basepos> and <trigger>
-    # ----------------------------------------
-	Write-Host ""
+    Write-Host ""
     Write-Separator -Title "VRD File Processing" -Char '═' -Length 50 -Color Cyan
-    $vrdRaw = Get-Content $vrdFile -Raw
-    $vrdContent = $vrdRaw.TrimEnd("`r","`n")
-    $lineEnding = if ($vrdRaw -match "`r`n") { "`r`n" } else { "`n" }
+    
+    try {
+        $vrdRaw = Get-Content $vrdFile -Raw -ErrorAction Stop
+        $lineEnding = if ($vrdRaw -match "`r`n") { "`r`n" } else { "`n" }
+        $allLines = $vrdRaw.TrimEnd("`r","`n") -split "`r?`n"
 
-    # Markers
-    $markerBasepos = "// Listed below are the original <basepos> and <trigger> translation values recorded by the scale tool"
-    $parenthetical = "// Make sure this is actually the true original scale, because it is now the reference for the multiplier`n"
-    $markerTrigger = "// Original trigger translations by helper and index:"
-
-    if ($vrdContent -match [regex]::Escape($markerBasepos)) {
-        # ----------------------------
-        # Subsequent runs → re-scale using stored originals
-        # ----------------------------
-        Write-Host "`n Detected previously scaled VRD - Applying new scale"
+        # Initialize data structures
         $currentHelper = ""
-        $origBasepos = @{}    # helper → [origX,origY,origZ]
-        $origTriggers = @{}   # helper → hashtable index→@(@(origTx,origTy,origTz))
-        $triggerIndexMap = @{} # helper → current trigger index
-
-        $allLines = $vrdContent -split "`r?`n"
-        foreach ($line in $allLines) {
-            if ($line -match $RegexPatterns.OrigBaseposMarker) {
-                $helper = $Matches[1]
-                $origBasepos[$helper] = @($Matches[2], $Matches[3], $Matches[4])
-            }
-            if ($line -match $RegexPatterns.OrigTriggerMarker) {
-                $helper = $Matches[1]
-                $tIdx = [int]$Matches[2]
-                $tx = $Matches[3]
-                $ty = $Matches[4]
-                $tz = $Matches[5]
-                if (-not $origTriggers.ContainsKey($helper)) {
-                    $origTriggers[$helper] = @{}
-                }
-                $origTriggers[$helper][$tIdx] = @($tx, $ty, $tz)
-            }
-        }
-
-        foreach ($k in $origTriggers.Keys) {
-            $triggerIndexMap[$k] = 0
-        }
-
-        $processedLines = @()
-        foreach ($line in $allLines) {
-            # Detect helper context
-            if ($line -match $RegexPatterns.HelperLine) {
-                $currentHelper = $Matches[1]
-                if (-not $triggerIndexMap.ContainsKey($currentHelper)) {
-                    $triggerIndexMap[$currentHelper] = 0
-                }
-                $processedLines += $line
-                continue
-            }
-
-            # Re-scale <basepos>
-            if ($line -match $RegexPatterns.BaseposLine) {
-                $prefix = $Matches[1]
-                $suffix = $Matches[5]
-                if ($origBasepos.ContainsKey($currentHelper)) {
-                    $origX = $origBasepos[$currentHelper][0]
-                    $origY = $origBasepos[$currentHelper][1]
-                    $origZ = $origBasepos[$currentHelper][2]
-                    $newX = ScaleNum $origX $scale
-                    $newY = ScaleNum $origY $scale
-                    $newZ = ScaleNum $origZ $scale
-                    $processedLines += "$prefix<basepos>     $newX         $newY         $newZ$suffix"
-                    continue
-                }
-            }
-
-            # Re-scale <trigger> (last three numbers on the line)
-            if ($line -match $RegexPatterns.TriggerLine) {
-                $prefix = $Matches[1]
-                $origTx = $Matches[2]
-                $origTy = $Matches[3]
-                $origTz = $Matches[4]
-                $suffix = $Matches[5]
-
-                if ($origTriggers.ContainsKey($currentHelper)) {
-                    $tIdx = $triggerIndexMap[$currentHelper]
-                    if ($origTriggers[$currentHelper].ContainsKey($tIdx)) {
-                        $oVals = $origTriggers[$currentHelper][$tIdx]
-                        $nTx = ScaleNum $oVals[0] $scale
-                        $nTy = ScaleNum $oVals[1] $scale
-                        $nTz = ScaleNum $oVals[2] $scale
-                        $processedLines += "$prefix $nTx $nTy $nTz$suffix"
-                        $triggerIndexMap[$currentHelper]++
-                        continue
-                    }
-                }
-            }
-
-            # Default: copy line unchanged
-            $processedLines += $line
-        }
-
-        [System.IO.File]::WriteAllText($vrdFile, ($processedLines -join $lineEnding), $utf8NoBOM)
-		Write-Host "`n Re-scaled translations in " -NoNewline
-		Write-Host $vrdFile -ForegroundColor Yellow -NoNewline
-		Write-Host " by x" -NoNewline
-		Write-Host $scaleFactor -ForegroundColor Yellow
-    } else {
-        # ----------------------------
-        # First-time run → capture originals & emit scaled lines
-        # ----------------------------
-        Write-Host "`n No prior scales detected - Recording original values"
-        Write-Host "`n Make sure the VRD had the correct translation values"
-        Write-Host " for the previously set scale before you ran the tool"
-        $currentHelper = ""
-        $origBasepos = @{}    # helper → [origX,origY,origZ]
-        $origTriggers = @{}    # helper → ordered list of @(origTx,origTy,origTz)
-
-        $allLines = $vrdContent -split "`r?`n"
+        $origBasepos = @{}
+        $origTriggers = @{}
+        $triggerIndices = @{}
+        $isFirstRun = $vrdRaw -notmatch [regex]::Escape("// ORIG_BASEPOS")
         $newLines = @()
 
         foreach ($line in $allLines) {
-            # Detect helper context
+            # Skip original value markers
+            if ($line -match '^// ORIG_(BASEPOS|TRIGGER)') { continue }
+
+            # Track current helper
             if ($line -match $RegexPatterns.HelperLine) {
                 $currentHelper = $Matches[1]
-                if (-not $origTriggers.ContainsKey($currentHelper)) {
-                    $origTriggers[$currentHelper] = @()
-                }
+                $triggerIndices[$currentHelper] = 0
                 $newLines += $line
                 continue
             }
 
-            # Capture & scale <basepos>
+            # Process basepos
             if ($line -match $RegexPatterns.BaseposLine) {
                 $prefix = $Matches[1]
-                $origX = $Matches[2]
-                $origY = $Matches[3]
-                $origZ = $Matches[4]
+                $x = $Matches[2]
+                $y = $Matches[3]
+                $z = $Matches[4]
                 $suffix = $Matches[5]
 
-                $origBasepos[$currentHelper] = @($origX, $origY, $origZ)
-                $newX = ScaleNum $origX $scale
-                $newY = ScaleNum $origY $scale
-                $newZ = ScaleNum $origZ $scale
+                if ($isFirstRun) {
+                    # Store normalized originals
+                    $origBasepos[$currentHelper] = @(
+                        (ScaleNum $x (1/$originalScale)),
+                        (ScaleNum $y (1/$originalScale)),
+                        (ScaleNum $z (1/$originalScale))
+                    )
+                }
 
+                # Apply new scale
+                $newX = [double]$origBasepos[$currentHelper][0] * $scale
+                $newY = [double]$origBasepos[$currentHelper][1] * $scale
+                $newZ = [double]$origBasepos[$currentHelper][2] * $scale
                 $newLines += "$prefix<basepos>     $newX         $newY         $newZ$suffix"
                 continue
             }
 
-            # Capture & scale <trigger> (last three numbers on the line)
+            # Process trigger translations
             if ($line -match $RegexPatterns.TriggerLine) {
                 $prefix = $Matches[1]
-                $origTx = $Matches[2]
-                $origTy = $Matches[3]
-                $origTz = $Matches[4]
+                $tx = $Matches[2]
+                $ty = $Matches[3]
+                $tz = $Matches[4]
                 $suffix = $Matches[5]
 
-                $origTriggers[$currentHelper] += ,@($origTx, $origTy, $origTz)
-                $newTx = ScaleNum $origTx $scale
-                $newTy = ScaleNum $origTy $scale
-                $newTz = ScaleNum $origTz $scale
+                if ($isFirstRun) {
+                    if (-not $origTriggers.ContainsKey($currentHelper)) {
+                        $origTriggers[$currentHelper] = @()
+                    }
+                    $origTriggers[$currentHelper] += ,@(
+                        (ScaleNum $tx (1/$originalScale)),
+                        (ScaleNum $ty (1/$originalScale)),
+                        (ScaleNum $tz (1/$originalScale))
+                    )
+                }
 
+                # Apply new scale
+                $idx = $triggerIndices[$currentHelper]++
+                $newTx = [double]$origTriggers[$currentHelper][$idx][0] * $scale
+                $newTy = [double]$origTriggers[$currentHelper][$idx][1] * $scale
+                $newTz = [double]$origTriggers[$currentHelper][$idx][2] * $scale
                 $newLines += "$prefix $newTx $newTy $newTz$suffix"
                 continue
             }
 
-            # Default: copy line unchanged
+            # Keep all other lines unchanged
             $newLines += $line
         }
 
-        # Append marker section for basepos and triggers
-        if ($origBasepos.Count -gt 0) {
-            if ($newLines[-1] -ne "") {
-                $newLines += ""
-            }
-            $newLines += $markerBasepos
-            $newLines += $parenthetical
+        # Add originals metadata if first run
+        if ($isFirstRun -and $origBasepos.Count -gt 0) {
+            $newLines += ""
+            $newLines += "// Listed below are the original <basepos> and <trigger> translation values"
+            $newLines += "// These values have been normalized to scale=1.0"
+            $newLines += ""
 
             foreach ($h in $origBasepos.Keys) {
                 $vals = $origBasepos[$h]
@@ -1008,44 +923,26 @@ if (-not $hasVrd) {
             }
 
             $newLines += ""
-            $newLines += $markerTrigger
-
+            $newLines += "// Original trigger translations by helper and index:"
             foreach ($h in $origTriggers.Keys) {
-                $tList = $origTriggers[$h]
-                for ($i = 0; $i -lt $tList.Count; $i++) {
-                    $oVals = $tList[$i]
-                    $newLines += "// ORIG_TRIGGER  $h  $i  $($oVals[0])  $($oVals[1])  $($oVals[2])"
+                for ($i = 0; $i -lt $origTriggers[$h].Count; $i++) {
+                    $vals = $origTriggers[$h][$i]
+                    $newLines += "// ORIG_TRIGGER  $h  $i  $($vals[0])  $($vals[1])  $($vals[2])"
                 }
             }
         }
 
-        else {
-            # Warning for no basepos found
-            Write-Host ""
-            Write-Separator -Title "WARNING: NO BASEPOS FOUND" -Char '!' -Length 50 -Color Red
-            Write-Host " No valid <basepos> entries exist within the VRD file"
-            Write-Separator -Length 50 -Color Red
-        }
-
-        # Check if any triggers were processed
-        $totalTriggers = 0
-        foreach ($h in $origTriggers.Keys) {
-            $totalTriggers += $origTriggers[$h].Count
-        }
-
-        if ($totalTriggers -eq 0) {
-            Write-Host ""
-            Write-Separator -Title "WARNING: NO TRIGGERS FOUND" -Char '!' -Length 50 -Color Red
-            Write-Host " No valid <trigger> entries exist within the VRD file"
-            Write-Separator -Length 50 -Color Red
-        }
-
+        # Write back to file
         [System.IO.File]::WriteAllText($vrdFile, ($newLines -join $lineEnding), $utf8NoBOM)
-		Write-Host "`n Scaled translations in " -NoNewline
-		Write-Host $vrdFile -ForegroundColor Yellow -NoNewline
-		Write-Host " by x" -NoNewline
-		Write-Host $scaleFactor -ForegroundColor Yellow
-        $vrdProcessed = $true
+        
+        Write-Host "`n Scaled translations in " -NoNewline
+        Write-Host $vrdFile -ForegroundColor Yellow -NoNewline
+        Write-Host " by x" -NoNewline
+        Write-Host $scaleFactor -ForegroundColor Yellow
+
+    } catch {
+        Write-Host "`n ERROR processing VRD file: $_" -ForegroundColor Red
+        Write-Host " VRD scaling was not completed." -ForegroundColor Yellow
     }
 }
 
