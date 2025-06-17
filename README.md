@@ -9,6 +9,6 @@
 3. Compile and enjoy your newely scaled model produced in literally 10 seconds.
 
 # Notes:
-The tool will detect and warn you about VTA files and EyeRadius, both of which cannot be scaled.
+The tool will detect and warn you about VTA files and $EyeRadius, both of which cannot be scaled.
 
-Be sure your VRD file has the correct calculations for the current scale your QC is set to!
+Be sure your VRD file has the correct values for the scale your QC is currently set to before first use!
