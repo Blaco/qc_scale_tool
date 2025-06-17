@@ -3,7 +3,7 @@
    Applies uniform scaling to QC model definitions and optionally VRD helper positions, with idiot-proof interface.
 
 .DESCRIPTION
-   This script performs three core functions with precision:
+   This script does the following:
    1. QC File Processing:
       - Mandatory selection of a *.qc file (errors if none, prompts if multiple)
       - Sets/updates the `$scale` value (top insertion or line replacement)
@@ -390,9 +390,9 @@ function Read-AnyKey {
     }
 }
 
-# -----------------------------
+# ----------------------------------
 # 1) Gather QC files (must have ≥ 1)
-# -----------------------------
+# ----------------------------------
 $qcItems = Get-ChildItem -Path . -Filter *.qc
 if ($qcItems.Count -eq 0) {
     Write-Host "`n ERROR: No QC files (*.qc) found in:" -ForegroundColor Red
@@ -418,9 +418,9 @@ try { # File System Permissions Check
     exit 1
 }
 
-# -----------------------------
+# ------------------------------
 # 2) Gather VRD files (optional)
-# -----------------------------
+# ------------------------------
 Write-Host ""
 Write-Separator -Title "VRD File Selection" -Char '═' -Length 50 -Color Cyan
 $vrdItems = Get-ChildItem -Path . -Filter *.vrd
@@ -455,9 +455,9 @@ else { # Get QC basename for matching
     }
 }
 
-# -----------------------------
+# -----------------------------------------------------------
 # 3) Prompt user for a scale (must be different from current)
-# -----------------------------
+# -----------------------------------------------------------
 Write-Host ""
 Write-Separator -Title "Scale Selection" -Char '═' -Length 50 -Color Cyan
 
@@ -511,9 +511,9 @@ Write-Host "`n Set new scale = " -NoNewLine
 Write-Host $scale -ForegroundColor Yellow -NoNewLine
 Write-Host " (scale factor = x$scaleFactor)"
 
-# -----------------------------
+# ------------------------------------------------------------
 # 4) Edit the QC: insert/update $scale and scale eyeball lines
-# -----------------------------
+# ------------------------------------------------------------
 Write-Host ""
 Write-Separator -Title "QC File Processing" -Char '═' -Length 50 -Color Cyan
 $qcLines = [System.Collections.ArrayList](Get-Content $qcFile)  # Convert to ArrayList
