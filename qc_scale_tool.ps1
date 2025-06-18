@@ -425,8 +425,8 @@ try {
         Write-Host "`n Do you just like seeing my idiotic error messages?" -ForegroundColor DarkGray
         Write-Host "`n Well congratulations, you found another one" -ForegroundColor DarkGray
         Write-Host "`n Id say something like 'have fun starting over idiot'" -ForegroundColor DarkGray
-        Write-Host "`n But my tool is so great it literally only takes" -ForegroundColor DarkGray
-        Write-Host "`n Like 5 seconds to use, Yeah Im pretty great" -ForegroundColor DarkGray
+        Write-Host "`n But my tool is so good it literally only takes" -ForegroundColor DarkGray
+        Write-Host "`n Like 5 seconds to use, Yeah Im pretty awesome ngl" -ForegroundColor DarkGray
         Write-Host "`n Anyway stop screwing around, you did this on purpose" -ForegroundColor DarkGray
         Read-AnyKey
 		exit 4
