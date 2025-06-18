@@ -32,9 +32,9 @@
    - User notifications to take manual action for $EyeballRadius and VTA files
    - Interactive prompts to validate all user inputs
 .NOTES
-	Made by Taco with Godless Communist AI
-	https://github.com/Blaco/qc_scale_tool
-	Probably works on Mac/Linux...probably
+    Made by Taco with Godless Communist AI
+    https://github.com/Blaco/qc_scale_tool
+    Probably works on Mac/Linux...probably
 #>
 
 # -----------------------------
@@ -139,24 +139,26 @@ if (-not $PSVersionTable.PSEdition -or
     $edition = if ($PSVersionTable.PSEdition) { $PSVersionTable.PSEdition } else { 'N/A (Pre-5.1)' }
     Write-Host " Edition: $edition`n" -ForegroundColor Gray
     
-	# Show help for Linux/macOS users
-	if ($PSVersionTable.Platform -in "Unix","Linux","MacOS" -or 
-		($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows)) {
-		Write-Host " On Linux/macOS, install PowerShell 7+ via:" -ForegroundColor Yellow
-		Write-Host " https://aka.ms/install-powershell" -ForegroundColor Cyan
-	}
+    # Show help for Linux/macOS users
+    if ($PSVersionTable.Platform -in "Unix","Linux","MacOS" -or 
+        ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows)) {
+        Write-Host " On Linux/macOS, install PowerShell 7+ via:" -ForegroundColor Yellow
+        Write-Host " https://aka.ms/install-powershell" -ForegroundColor Cyan
+    }
 
     try { [System.Console]::ReadKey($true) | Out-Null } 
     catch { Read-Host " Press Enter to exit" | Out-Null }
     exit 1
 }
 
-# -----------------------------
-# Error Handling (Cross-OS/PS3+)
-# -----------------------------
+# ----------------------
+# Error Handling Stuff
+# ----------------------
 $EXIT_GENERAL_ERROR = 1
 $EXIT_USER_CANCEL = 2
 $EXIT_NO_QCFILES = 3
+$EXIT_EMPTY_FILE = 4
+$EXIT_FILE_LOCKED = 5
 
 trap {
     Write-Host "`n[!] UNHANDLED ERROR: $_" -ForegroundColor Red 
@@ -174,19 +176,19 @@ trap {
 $RegexPatterns = @{
     # Misc
     NumericValue = '[-+]?\d*\.?\d+'
-	BaseFileName = '^(.*?)(?:_x?-?\d*\.?\d+)?$'
-	VtaFileName  = '\S+\.vta(?:"|\s|$)'
+    BaseFileName = '^(.*?)(?:_x?-?\d*\.?\d+)?$'
+    VtaFileName  = '\S+\.vta(?:"|\s|$)'
 
-	# QC patterns
+    # QC patterns
     ScaleLine     = '^(?m)\s*\$scale\s+[-+]?\d*\.?\d+'
     EyeballLine   = '^(?<pre>.*?eyeball.*?\s+)(?<x>[-+]?\d*\.?\d+)\s+(?<y>[-+]?\d*\.?\d+)\s+(?<z>[-+]?\d*\.?\d+)\s+(?<mat>\S+)\s+(?<diam>[-+]?\d*\.?\d+)(?<diamSpace>\s+)(?<angle>[-+]?\d*\.?\d+)(?<angleSpace>\s+)(?<irisMat>\S+)\s+(?<irisScale>[-+]?\d*\.?\d+)(?<post>.*)$'
     ModelNameLine = '^(?<indent>\s*\$modelname\s+)(?<path>.+)$'
-    
+
     # VRD patterns
     HelperLine  = '^\s*<helper>\s+(\S+)'
     BaseposLine = '^(.*?)<basepos>\s*([-+]?(?:\d*\.\d+|\d+))\s+([-+]?(?:\d*\.\d+|\d+))\s+([-+]?(?:\d*\.\d+|\d+))(.*)$'
     TriggerLine = '^(.*<trigger>.*\S)\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)(\s*)$'
-    
+
     # VRD markers
     OrigBaseposMarker = '^//\s*ORIG_BASEPOS\s+(\S+)\s+([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)'
     OrigTriggerMarker = '^//\s*ORIG_TRIGGER\s+(\S+)\s+(\d+)\s+([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)'
@@ -199,20 +201,26 @@ $RegexPatterns = @{
 # To encode UTF8 without BOM in Powershell 5.1
 $utf8NoBOM = New-Object System.Text.UTF8Encoding $false
 
+# Helps us find clues later
+$h = '45505354' + '45494E20' + '4449444E27' + '54204B494C4C' + '2048494D53454C46'
+$r = for($i=0; $i -lt $h.Length; $i += 2) { [char][Convert]::ToByte($h.Substring($i,2),16) }
+
 function Write-RandomNo { # For fun
     $response = switch (Get-Random -Minimum 1 -Maximum 101) {
-        {$_ -le 5} {
-            @(  # 1% chance for one of these to trigger
+        {$_ -le 3} {
+            @(  # 5% chance for one of these to trigger
                 "Dr. Robotnik: NOOOOOO!!!",
                 "Doomguy: No.",
                 "Hungry Pumkin: NO! I DON'T WANT THAT!",
                 "mastr cheef: n0",
-                "Darth Vader: NOOOOOOOOOOOOOOO!!!!!!!!!!!!!!!"
+                "Darth Vader: NOOOOOOOOOOOOOOO!!!!!!!!!!!!!!!",
+                "Leon S. Kennedy: No thanks, bro.",
+                "Gordon Freeman: ..."
             ) | Get-Random
         }
         default {
             @(  # 95% chance for TF2 vo lines
-			    "Engineer: Nope.",
+                "Engineer: Nope.",
                 "Heavy: Nyet!", "Heavy: Iz not possible!", "Heavy: NO!!!",
                 "Medic: Nein!", "Medic: Nichts da!",
                 "Scout: Uh, no.", "Scout: No way!", "Scout: Stupid, stupid, stupid!",
@@ -234,8 +242,10 @@ function Write-RandomNo { # For fun
             "*Robotnik*" { "DarkRed" }
             "*Doomguy*"  { "DarkGray" }
             "*Pumkin*"   { "Yellow" }
+            "*Freeman*"  { "Yellow" }
             "*cheef*"    { "Green" }
             "*Vader*"    { "DarkGray" }
+            "*Kennedy*"  { "Gray" }
         }
     }
     Write-Host `n $speaker -NoNewline -ForegroundColor $color
@@ -363,8 +373,7 @@ function Get-YesNoResponse {
             }
         } while ($true)
     } catch {
-        # Fallback to line input
-        do {
+        do {  # Fallback to line input
             $input = Read-Host "[y/n]"
             if ($input -match '^[yn]$') { return $input.ToLower() }
             Write-Host " Please enter 'y' or 'n'"
@@ -384,8 +393,7 @@ function Read-AnyKey {
             return
         }
     }
-    catch {
-        # Last resort
+    catch { # Last resort
         Read-Host " Press Enter to continue" | Out-Null
     }
 }
@@ -399,7 +407,7 @@ if ($qcItems.Count -eq 0) {
     Write-Host "$(Get-Location)" -ForegroundColor Cyan
     Write-Host "`n Place this script in a folder containing .qc files.`n" -ForegroundColor Yellow
     Read-AnyKey
-    exit 3 # No QC file error code
+    exit 3
 }
 
 Write-Host ""
@@ -409,13 +417,25 @@ $qcFile = Get-UserSelection -Items $qcItems -Prompt "`n Multiple QC files found:
 Write-Host "`n Selected QC: " -NoNewline
 Write-Host "$qcFile" -ForegroundColor Green
 
-try { # File System Permissions Check
-    [System.IO.File]::OpenWrite($qcFile).Close()
+try {
+    # Check access permissions and verify contents
+    $content = [System.IO.File]::ReadAllText($qcFile).Trim()
+    if ($content -eq "") {
+        Write-Host "`n ERROR: QC file is empty!" -ForegroundColor Red
+        Write-Host "`n Do you just like seeing my idiotic error messages?" -ForegroundColor DarkGray
+        Write-Host "`n Well congratulations, you found another one" -ForegroundColor DarkGray
+        Write-Host "`n Id say something like 'have fun starting over idiot'" -ForegroundColor DarkGray
+        Write-Host "`n But my tool is so great it literally only takes" -ForegroundColor DarkGray
+        Write-Host "`n Like 5 seconds to use, Yeah Im pretty great" -ForegroundColor DarkGray
+        Write-Host "`n Anyway stop screwing around, you did this on purpose" -ForegroundColor DarkGray
+        Read-AnyKey
+		exit 4
+    }
 } catch {
-    Write-Host "`n ERROR: No write permission for '$qcFile'" -ForegroundColor Red
-    Write-Host " Run as admin or check file locks." -ForegroundColor Yellow
+    Write-Host "`n ERROR: Cannot access '$qcFile'" -ForegroundColor Red
+    Write-Host " Reason: $($_.Exception.Message)`n" -ForegroundColor Yellow
     Read-AnyKey
-    exit 1
+	exit 5
 }
 
 # ------------------------------
@@ -437,17 +457,36 @@ else { # Get QC basename for matching
     Write-Host "`n Selected VRD: " -NoNewline
     Write-Host "$vrdFile" -ForegroundColor Green
 
+    try {
+        # Read entire VRD as one string and trim whitespace
+        $vrdRaw = [System.IO.File]::ReadAllText($vrdFile).Trim()
+        if ($vrdRaw -eq "") {
+            Write-Host "`n ERROR: VRD file is empty!" -ForegroundColor Red
+            Write-Host "`n This is a good opportunity to make fun of you" -ForegroundColor DarkGray
+            Read-AnyKey
+            Write-Host "`n This is me making fun of you" -ForegroundColor DarkGray
+            Read-AnyKey
+            Write-Host "`n Okay now you can go" -ForegroundColor DarkGray
+            Read-AnyKey
+            exit 4
+        }
+    }
+    catch {
+        Write-Host "`n ERROR: Cannot access '$vrdFile'" -ForegroundColor Red
+        Write-Host " Reason: $($_.Exception.Message)`n" -ForegroundColor Yellow
+        Read-AnyKey
+        exit 5
+    }
+
     $vrdBaseName = [System.IO.Path]::GetFileNameWithoutExtension($vrdFile)
     if ($qcBaseName -cne $vrdBaseName) {
         Write-Host ""
-        Write-Separator -Title " WARNING: VRD Name Mismatch" -Char '!' -Length 50 -Color Yellow
-        Write-Host "`nQC filename is '" -NoNewline
-        Write-Host $qcBaseName -ForegroundColor Yellow -NoNewline
-        Write-Host "' and VRD filename is '" -NoNewline
-        Write-Host $vrdBaseName -ForegroundColor Yellow -NoNewline
-        Write-Host "'." -NoNewline
-        Write-Host "`n"
-        $resp = Get-YesNoResponse " Process VRD anyway? (y/n) "
+        Write-Separator -Title " WARNING: VRD Name Mismatch" -Char '!' -Length 50 -Color Red
+        Write-Host "`n  QC filename is: " -NoNewline
+        Write-Host $qcBaseName -ForegroundColor Yellow
+        Write-Host " VRD filename is: " -NoNewline
+        Write-Host $vrdBaseName -ForegroundColor Yellow
+        $resp = Get-YesNoResponse "`n Process VRD anyway? (y/n) "
         if ($resp.ToLower() -ne 'y') {
             Write-Host "`n Skipping VRD processing."
             $hasVrd = $false
@@ -473,10 +512,10 @@ for ($j = 0; $j -lt $tempLines.Count; $j++) {
 
 $scale = 0.0
 while ($true) {
-	Write-Host "`n Enter new scale (" -NoNewline
-	Write-Host "current = $originalScale" -ForegroundColor Gray -NoNewline
-	Write-Host "): " -NoNewline
-	$scaleInput = Read-Host
+    Write-Host "`n Enter new scale (" -NoNewline
+    Write-Host "current = $originalScale" -ForegroundColor Gray -NoNewline
+    Write-Host "): " -NoNewline
+    $scaleInput = Read-Host
     
     # Check if input is a valid number
     $isValidNumber = [double]::TryParse($scaleInput, [ref]$scale)
@@ -494,14 +533,11 @@ while ($true) {
     elseif ([math]::Abs($scale - $originalScale) -lt 0.001) {
         $warningMessages += "too similar to current scale"
     }
-
-    # If any warnings, show them
     if ($warningMessages.Count -gt 0) {
-		Write-RandomNo
+        Write-RandomNo # If any warnings, show them
         Write-Host " ($($warningMessages -join ', '))" -ForegroundColor DarkGray
         continue
     }
-    
     break
 }
 
@@ -544,7 +580,8 @@ if ($hasVTA) {
     Write-Separator -Length 50 -Color Red
     Write-Host " You must either:" -ForegroundColor Yellow
     Write-Host " 1. Re-export your .vta file at the new scale (x$scaleFactor)"
-    Write-Host " 2. Use DMX format instead (highly recommended)" -ForegroundColor Cyan
+    Write-Host " 2. Use DMX format" -NoNewLine -ForegroundColor Cyan
+    Write-Host "..its $((Get-Date).Year) why arent you using this?" -ForegroundColor Darkgray
     Write-Separator -Length 50 -Color Red
     Write-Host " The model will still be scaled, but your flexes" -ForegroundColor Yellow
     Write-Host " will not work unless you take the above actions." -ForegroundColor Yellow
@@ -553,7 +590,7 @@ if ($hasVTA) {
     $resp = Get-YesNoResponse " Continue with QC scaling anyway? (y/n) "
     if ($resp.ToLower() -ne 'y') {
         Write-Host "`n Scaling aborted by user." -ForegroundColor Yellow
-		Read-AnyKey
+        Read-AnyKey
         exit 2
     }
 }
@@ -625,7 +662,7 @@ if (-not $foundScale) {
         Write-Host "`n Inserted " -NoNewline
         Write-Host "`$scale $scale" -ForegroundColor Yellow -NoNewline
         Write-Host " at top of file " -NoNewline
-        Write-Host "(your entire file is comments wtf)" -ForegroundColor Gray
+        Write-Host "`n (why the fuck is your entire QC file commented out?)" -ForegroundColor Gray
     }
 }
 
@@ -656,9 +693,9 @@ if ($eyeballCount -gt 0) {
         
         if ($qcLines[$i] -match $RegexPatterns.EyeballLine) {
             # Store original line (trimmed text entries)
-			$originalDisplay = "{0} {1} {2} {3}  {4}  {5}  {6}" -f `
-				$Matches['mat'], $Matches['x'], $Matches['y'], $Matches['z'], 
-				$Matches['diam'], $Matches['angle'], $Matches['irisScale']
+            $originalDisplay = "{0} {1} {2} {3}  {4}  {5}  {6}" -f `
+                $Matches['mat'], $Matches['x'], $Matches['y'], $Matches['z'], 
+                $Matches['diam'], $Matches['angle'], $Matches['irisScale']
             
             # Scale all relevant parameters
             $newX = ScaleNum $Matches['x'] $relativeScale
@@ -667,10 +704,10 @@ if ($eyeballCount -gt 0) {
             $newDiam = ScaleNum $Matches['diam'] $relativeScale
             $newIris = ScaleNum $Matches['irisScale'] $relativeScale
 
-			# Create new line (trimmed text entries)
-			$newDisplay = "{0} {1} {2} {3}  {4}  {5}  {6}" -f `
-				$Matches['mat'], $newX, $newY, $newZ, 
-				$newDiam, $Matches['angle'], $newIris
+            # Create new line (trimmed text entries)
+            $newDisplay = "{0} {1} {2} {3}  {4}  {5}  {6}" -f `
+                $Matches['mat'], $newX, $newY, $newZ, 
+                $newDiam, $Matches['angle'], $newIris
             
             # Store change for output
             $changes += [PSCustomObject]@{
@@ -686,7 +723,7 @@ if ($eyeballCount -gt 0) {
 
             if (-not $eyeballWarningShown) {
                 Write-Host ""
-				Write-Separator -Title "NOTICE: Eyeballs Detected" -Char '!' -Length 50 -Color Yellow
+                Write-Separator -Title "NOTICE: Eyeballs Detected" -Char '!' -Length 50 -Color Yellow
                 Write-Host " Found $eyeballCount eyeball definition(s), see below for changes"
                 Write-Host "`n If model uses " -NoNewline
                 Write-Host -ForegroundColor Yellow '$RaytraceSphere 1' -NoNewline
@@ -704,16 +741,16 @@ if ($eyeballCount -gt 0) {
     
     # Display changes
     Write-Separator -Title "Eyeball Parameters" -Length 50 -Color DarkCyan
-	Write-Host "          Name       X     Y     Z    Dia Ang Iris"
-	foreach ($change in $changes) {
-		Write-Host ""
-		Write-Host " Old:  " -NoNewline -ForegroundColor DarkGray
+    Write-Host "          Name       X     Y     Z    Dia Ang Iris"
+    foreach ($change in $changes) {
+        Write-Host ""
+        Write-Host " Old:  " -NoNewline -ForegroundColor DarkGray
         Write-Host $change.Original -ForegroundColor DarkGray
         Write-Host " New:  " -NoNewline
         Write-Host $change.Modified
-		Write-Host ""
+        Write-Host ""
     }
-	Write-Separator -Title "" -Length 50 -Color DarkCyan
+    Write-Separator -Title "" -Length 50 -Color DarkCyan
 }
 
 [System.IO.File]::WriteAllText($qcFile, ($qcLines -join "`r`n"), $utf8NoBOM)
@@ -819,9 +856,9 @@ if ($resp -eq 'y') {
     [System.IO.File]::WriteAllText($qcFile, ($qcLines -join "`r`n"), $utf8NoBOM)
 }
 
-# -----------------------------
+# --------------------------
 # 5) Process VRD if included
-# -----------------------------
+# --------------------------
 if (-not $hasVrd) {
     Write-Host "`n QC updated; no VRD was processed."
 } else {
@@ -831,7 +868,7 @@ if (-not $hasVrd) {
     $vrdContent = $vrdRaw.TrimEnd("`r","`n")
     $lineEnding = if ($vrdRaw -match "`r`n") { "`r`n" } else { "`n" }
 
-    # Markers	# IMPORTANT: When markers exist, CURRENT VALUES ARE IGNORED COMPLETELY, scaling always uses original marked values × new scale factor
+    # Markers   # IMPORTANT: When markers exist, CURRENT VALUES ARE IGNORED COMPLETELY, scaling always uses original marked values × new scale factor
     $markerBasepos = "// Listed below are the original <basepos> and <trigger> translation values qc_scale_tool found on first run, normalized to `$scale 1"
     $parenthetical = "// If these are not correct, remove all of these comments and run the tool again with values that match the `$scale set in the QC`n"
 
@@ -845,19 +882,19 @@ if (-not $hasVrd) {
     $allLines = $vrdContent -split "`r?`n"
     $isFirstRun = $vrdContent -notmatch [regex]::Escape($markerBasepos)
 
-	if ($isFirstRun) {
-		# ------------------------------------------------------
-		# First-time run → capture originals & emit scaled lines
-		# ------------------------------------------------------
-		Write-Host "`n No prior scales detected - Recording original values"
-		Write-Host "`n Make sure the VRD had the correct translation values"
-		Write-Host " for the previously set scale before you ran the tool"
-	} else {
-		# ------------------------------------------------------
-		# Subsequent runs → re-scale using stored originals
-		# ------------------------------------------------------
-		Write-Host "`n Detected previously scaled VRD - Applying new scale"
-	}
+    if ($isFirstRun) {
+        # ---------------------------------------------------------------
+        # First-time run → Capture originals values as normalized markers
+        # ---------------------------------------------------------------
+        Write-Host "`n No prior scales detected - Recording original values"
+        Write-Host "`n Make sure the VRD had the correct translation values"
+        Write-Host " for the previously set scale before you ran the tool"
+    } else {
+        # -----------------------------------------------
+        # Subsequent runs → Re-scale using stored markers
+        # -----------------------------------------------
+        Write-Host "`n Detected previously scaled VRD - Applying new scale"
+    }
 
     foreach ($line in $allLines) {
         # Skip existing marker lines on subsequent runs
@@ -902,106 +939,119 @@ if (-not $hasVrd) {
         }
     }
 
-	# Second pass - process lines and apply new scale
-	$currentHelper = ""
-	$triggerIndices = @{} # helper → current trigger index
-	$newLines = @()
-	$hasBasepos = $false  # Initialize tracking variable
+    # Second pass - process lines and apply new scale
+    $currentHelper = ""
+    $triggerIndices = @{} # Helper → current trigger index
+    $newLines = @()
+    $hasBasepos = $false  # Initialize tracking variable
 
-	foreach ($line in $allLines) {
-		# Detect helper context
-		if ($line -match $RegexPatterns.HelperLine) {
-			$currentHelper = $Matches[1]
-			$triggerIndices[$currentHelper] = 0
-			$newLines += $line
-			continue
-		}
+    foreach ($line in $allLines) { # Detect helper context
+        if ($line -match $RegexPatterns.HelperLine) {
+            $currentHelper = $Matches[1]
+            $triggerIndices[$currentHelper] = 0
+            $newLines += $line
+            continue
+        }
 
-		# Process <basepos> lines using original values from markers
-		if ($line -match $RegexPatterns.BaseposLine) {
-			if ($line -match $RegexPatterns.OrigBaseposMarker) {
-				# This is a marker line - leave it exactly as-is
-				$newLines += $line
-			}
-			elseif ($origBasepos.ContainsKey($currentHelper)) {
-				# This is an actual basepos line - scale it
-				$vals = $origBasepos[$currentHelper]
-				$newX = ScaleNum $vals[0] $scale
-				$newY = ScaleNum $vals[1] $scale
-				$newZ = ScaleNum $vals[2] $scale
-				$newLines += "$($Matches[1])<basepos>     $newX         $newY         $newZ$($Matches[5])"
-				$hasBasepos = $true  # Mark that we found at least one basepos
-				continue
+        # Process <basepos> lines using original values from markers
+        if ($line -match $RegexPatterns.BaseposLine) {
+            if ($line -match $RegexPatterns.OrigBaseposMarker) {
+                # This is a marker line - leave it exactly as-is
+                $newLines += $line
+            }
+            elseif ($origBasepos.ContainsKey($currentHelper)) {
+                # This is an actual basepos line - scale it
+                $vals = $origBasepos[$currentHelper]
+                $newX = ScaleNum $vals[0] $scale
+                $newY = ScaleNum $vals[1] $scale
+                $newZ = ScaleNum $vals[2] $scale
+                $newLines += "$($Matches[1])<basepos>     $newX         $newY         $newZ$($Matches[5])"
+                $hasBasepos = $true  # Mark that we found at least one basepos
+                continue
+            }
+        }
 
-			}
-		}
+        # Process <trigger> lines using original values from markers (maintains original order via index tracking)
+        if ($line -match $RegexPatterns.TriggerLine) {
+            if ($line -match $RegexPatterns.OrigTriggerMarker) {
+                # This is a marker line - leave it exactly as-is
+                $newLines += $line
+            }
+            elseif ($origTriggers.ContainsKey($currentHelper)) {
+                # This is an actual trigger line - scale it
+                $vals = $origTriggers[$currentHelper][$triggerIndices[$currentHelper]]
+                $newTx = ScaleNum $vals[0] $scale
+                $newTy = ScaleNum $vals[1] $scale
+                $newTz = ScaleNum $vals[2] $scale
+                $newLines += "$($Matches[1]) $newTx $newTy $newTz$($Matches[5])"
+                $triggerIndices[$currentHelper]++
+                continue
+            }
+        } $newLines += $line
+    }
 
-		# Process <trigger> lines using original values from markers (maintains original order via index tracking)
-		if ($line -match $RegexPatterns.TriggerLine) {
-			if ($line -match $RegexPatterns.OrigTriggerMarker) {
-				# This is a marker line - leave it exactly as-is
-				$newLines += $line
-			}
-			elseif ($origTriggers.ContainsKey($currentHelper)) {
-				# This is an actual trigger line - scale it
-				$vals = $origTriggers[$currentHelper][$triggerIndices[$currentHelper]]
-				$newTx = ScaleNum $vals[0] $scale
-				$newTy = ScaleNum $vals[1] $scale
-				$newTz = ScaleNum $vals[2] $scale
-				$newLines += "$($Matches[1]) $newTx $newTy $newTz$($Matches[5])"
-				$triggerIndices[$currentHelper]++
-				continue
-			}
-		} $newLines += $line
-	}
+    # Only add markers if this was first run (subsequent runs preserve existing markers)
+    if ($isFirstRun -and $origBasepos.Count -gt 0) {
+        if ($newLines[-1] -ne "") { $newLines += "" }
+        $newLines += $markerBasepos
+        $newLines += $parenthetical
+        
+        foreach ($h in $origBasepos.Keys) {
+            $vals = $origBasepos[$h]
+            $newLines += "// ORIG_BASEPOS  $h  $($vals[0])  $($vals[1])  $($vals[2])"
+        }
+        
+        $newLines += ""
+        
+        foreach ($h in $origTriggers.Keys) {
+            $tList = $origTriggers[$h]
+            for ($i = 0; $i -lt $tList.Count; $i++) {
+                $oVals = $tList[$i]
+                $newLines += "// ORIG_TRIGGER  $h  $i  $($oVals[0])  $($oVals[1])  $($oVals[2])"
+            }
+        }
+    }
 
-	# Only add markers if this was first run (subsequent runs preserve existing markers)
-	if ($isFirstRun -and $origBasepos.Count -gt 0) {
-		if ($newLines[-1] -ne "") { $newLines += "" }
-		$newLines += $markerBasepos
-		$newLines += $parenthetical
-		
-		foreach ($h in $origBasepos.Keys) {
-			$vals = $origBasepos[$h]
-			$newLines += "// ORIG_BASEPOS  $h  $($vals[0])  $($vals[1])  $($vals[2])"
-		}
-		
-		$newLines += ""
-		
-		foreach ($h in $origTriggers.Keys) {
-			$tList = $origTriggers[$h]
-			for ($i = 0; $i -lt $tList.Count; $i++) {
-				$oVals = $tList[$i]
-				$newLines += "// ORIG_TRIGGER  $h  $i  $($oVals[0])  $($oVals[1])  $($oVals[2])"
-			}
-		}
-	}
+    if (-not $hasBasepos -and $hasVrd) {
+        Write-Host ""
+        Write-Separator -Title "WARNING: NO BASEPOS FOUND" -Char '!' -Length 50 -Color Red
+        Write-Host " No valid <basepos> entries exist within the VRD file"
+        Write-Separator -Length 50 -Color Red
+    }
 
-	if (-not $hasBasepos -and $hasVrd) {
-		Write-Separator -Title "`n WARNING: NO BASEPOS FOUND" -Char '!' -Length 50 -Color Red
-		Write-Host " No valid <basepos> entries exist within the VRD file"
-		Write-Separator -Length 50 -Color Red
-	}
-
-	$totalTriggers = ($origTriggers.Values | Measure-Object -Property Count -Sum).Sum
-	if ($totalTriggers -eq 0 -and $hasVrd) {
-		Write-Separator -Title "`n WARNING: NO TRIGGERS FOUND" -Char '!' -Length 50 -Color Red
-		Write-Host " No valid <trigger> entries exist within the VRD file"
-		Write-Separator -Length 50 -Color Red
-	}
+    $totalTriggers = 0
+    foreach ($helper in $origTriggers.Keys) {
+        foreach ($trigger in $origTriggers[$helper]) { # Only count non-zero triggers
+            if ([double]$trigger[0] -ne 0 -or [double]$trigger[1] -ne 0 -or [double]$trigger[2] -ne 0) { $totalTriggers++ }
+        }
+    }
+    if ($totalTriggers -eq 0 -and $hasVrd) {
+        Write-Host ""
+        Write-Separator -Title "WARNING: NO TRIGGERS FOUND" -Char '!' -Length 50 -Color Red
+        Write-Host " No valid <trigger> entries exist within the VRD file"
+        Write-Separator -Length 50 -Color Red
+    }
 
     [System.IO.File]::WriteAllText($vrdFile, ($newLines -join $lineEnding), $utf8NoBOM)
-    Write-Host "`n Scaled translations in " -NoNewline
-    Write-Host $vrdFile -ForegroundColor Yellow -NoNewline
-    Write-Host " by x" -NoNewline
-    Write-Host $scaleFactor -ForegroundColor Yellow
+
+    if (-not $hasBasepos -and $totalTriggers -eq 0) {
+        Write-Host "`n    Try using an actual VRD file next time genius" -ForegroundColor DarkRed
+    }
+    else {
+        $messageParts = @()
+        if ($hasBasepos) { $messageParts += "<basepos>" }
+        if ($totalTriggers -gt 0) { $messageParts += "$totalTriggers <trigger>" }
+        
+        Write-Host "`n $($messageParts -join ' and ') translations scaled x" -NoNewline
+        Write-Host $scaleFactor -ForegroundColor Yellow
+    }
 }
 
 Write-Host ""
 $completionMessages = @(
     @{Text="K THX BAI"; Color="Green"},
-    @{Text="OMGWTFBBQ"; Color="DarkRed"},
-    @{Text="A WINNER IS YOU!"; Color="DarkGreen"},
+    @{Text="THANKS, AND HAVE FUN"; Color="Gray"},
+    @{Text="A WINNER IS YOU!"; Color="Green"},
     @{Text="HOLY CRAP LOIS DIS IS FRIGGIN SWEET"; Color="DarkGray"},
     @{Text="WE'LL BANG OKAY?"; Color="Red"},
     @{Text="HAAAAAAAAAAAAAX!!!!!"; Color="DarkCyan"},
@@ -1011,20 +1061,19 @@ $completionMessages = @(
     @{Text="ITS A SECRET TO EVERYBODY"; Color="Blue"},
     @{Text="I'M REALLY FEELING IT!"; Color="Red"},
     @{Text="THE CAKE IS A LIE"; Color="Red"},
-    @{Text="DO A BARREL ROLL!"; Color="Yellow"},
     @{Text="DON'T FORGET TO BUY CAPTAIN TOAD!"; Color="Yellow"},
     @{Text="hi every1 im new!!!!!!! *holds up spork*"; Color="Magenta"},
     @{Text="RISE AND SHINE MR FREEMAN"; Color="DarkGray"},
     @{Text="PICK UP THAT CAN"; Color="DarkGray"},
-    @{Text="SPAAAAAAAAACEEEEEEEEEEEEE!"; Color="Yellow"},
     @{Text="SHREK IS LOVE, SHREK IS LIFE"; Color="Green"},
     @{Text="TELL ME ABOUT BANE, WHY DOES HE WEAR THE MASK?"; Color="DarkGray"},
     @{Text="like favorite subscribe :)"; Color="Red"},
     @{Text="[VGS] SHAZBOT!"; Color="DarkCyan"},
-    @{Text="HOPEFULLY IT WILL HAVE BEEN WORTH THE WEIGHT"; Color="Gray"},
+    @{Text="HOPEFULLY IT WILL HAVE BEEN WORTH THE WAIT"; Color="Gray"},
     @{Text="ALL YOUR BASE ARE BELONG TO US"; Color="Yellow"}
 )
 
+# Need to save file with UTF-8-BOM encoding for these to display properly
 $toucan = @"
          ░░░░░░░░▄▄▄▀▀▀▄▄███▄░░░░░░░░░░░░░░
          ░░░░░▄▀▀░░░░░░░▐░▀██▌░░░░░░░░░░░░░
@@ -1039,15 +1088,72 @@ $toucan = @"
          ░░░░░░has░░░░░░░░▀▄▄███████████████ 
          ░░░░░arrived░░░░░░░░░░░░█▀██████░░
 "@
+$triforce = @"
+                       
+                      †¥
+                     ††¥¥
+                    ††††¥¥
+                   ††††††¥¥
+                  ††††††††¥¥
+                 ††††††††††¥¥
+                ††††††††††††¥¥
+               ††††††††††††††¥¥
+              ††††††††††††††††¥¥
+             ††¥¥¥¥¥¥¥¥¥¥¥¥¥¥††¥¥
+            ††††¥¥          ††††¥¥
+           ††††††¥¥        ††††††¥¥
+          ††††††††¥¥      ††††††††¥¥
+         ††††††††††¥¥    ††††††††††¥¥
+        ††††††††††††¥¥  ††††††††††††¥¥
+       ††††††††††††††††††††††††††††††¥¥
+      †¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥¥
+"@
+$link = @"
+        ¶¶3333¶   ¶¶¶¶ÿÿÿÿ¶¶¶¶   ¶3333¶¶
+        ¶¶33333¶_¶ÿÿÿÿÿÿÿÿÿÿÿÿ¶_¶33333¶¶
+        ¶¶¶¶¶¶¶¶ÿÿ¶¶¶¶¶¶¶¶¶¶¶¶ÿÿ¶¶¶¶¶¶¶¶
+        ¶¶0000¶¶¶77777777777777¶¶¶0000¶¶
+        ¶¶0000¶¶7¶¶¶¶¶¶¶¶¶¶¶¶¶¶7¶¶0000¶¶
+         ¶¶000¶¶¶a  ¶¶aaaa¶¶  a¶¶¶000¶¶
+         ¶¶000¶¶aa  ¶¶aaaa¶¶  aa¶¶000¶¶
+          ¶¶00¶¶aaa  aaaaaa  aaa¶¶00¶¶
+           ¶¶000¶¶aaaaaaaaaaaa¶¶000¶¶
+            ¶¶00¶¶¶¶aaaaaaaa¶¶¶¶00¶¶
+             ¶¶88888¶¶¶¶¶¶¶¶88888¶¶
+              ¶¶8855888888885588¶¶
+              ¶¶8855555555555588¶¶
+            ¶¶11¶¶888855558888¶¶11¶¶
+          ¶¶88881111¶¶1111¶¶11118888¶¶
+          ¶¶¶¶¶¶8888111111118888¶¶¶¶¶¶
+        ¶¶ƒƒ§§¶¶¶¶¶¶88888888¶¶¶¶¶¶§§ƒƒ¶¶
+        ¶¶ƒƒƒƒ§§¶¶¯¶¶¶¶¶¶¶¶¶¶¯¶¶§§ƒƒƒƒ¶¶
+        ¶¶¶¶¶¶¶¶¶               ¶¶¶¶¶¶¶¶¶
+"@
 
-# 3% chance for le toucan (need UTF-8-BOM encoding)
-if ((Get-Random -Minimum 1 -Maximum 101) -le 3) {
-    Write-Host $toucan -ForegroundColor Cyan
-} 
-else {
-    # 97% chance for normal message
-    $randomMessage = $completionMessages | Get-Random
-    Write-Separator -Title $randomMessage.Text -Length 50 -Color $randomMessage.Color
+switch (Get-Random -Minimum 1 -Maximum 101) {
+    { $_ -le 3 } {  # 3% Toucan
+        Write-Host $toucan -ForegroundColor Cyan
+        Write-Host "`n               Press any key to PRAISE!" -NoNewline
+        Read-AnyKey
+        exit 0
+    }
+    { $_ -le 4 } {  # 1% Zelda
+        Write-Host $triforce -ForegroundColor Yellow
+        Write-Host $link -ForegroundColor Green
+        Write-Host "`n   DONE! PRESS ANY KEY TO EXIT!" -NoNewline
+        Write-Host "(Ultra-rare end!)" -ForegroundColor Yellow
+        Read-AnyKey
+        exit 0
+    }
+    { $_ -le 5 } {  # Also 1% (it is a mystery 👻)
+        Write-Separator -Title "$($r -join '')" -Length 50 -Color DarkRed
+        Read-AnyKey
+        exit 0
+    }
+    default {  # 95% Generic Messages
+        $randomMessage = $completionMessages | Get-Random
+        Write-Separator -Title $randomMessage.Text -Length 50 -Color $randomMessage.Color
+    }
 }
 
 Write-Host "`n Done. Press any key to exit..." -NoNewline
