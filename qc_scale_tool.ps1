@@ -259,12 +259,10 @@ function Write-Separator {
         [char]$Char = '─',
         [ConsoleColor]$Color = [ConsoleColor]::DarkGray
     )
-    
+
     if ($Title) {
-        $titlePadding = ($Length - $Title.Length - 4) / 2  # Account for " [ " and " ] "
-        $leftPadding = [math]::Floor($titlePadding)
-        $rightPadding = [math]::Ceiling($titlePadding)
-        Write-Host (" $($Char.ToString() * $leftPadding) [ $Title ] $($Char.ToString() * $rightPadding)") -ForegroundColor $Color
+        $padding = [math]::Floor(($Length - $Title.Length - 4) / 2)
+        Write-Host (" $($Char.ToString() * $padding) [ $Title ] $($Char.ToString() * $padding)") -ForegroundColor $Color
     }
     else {
         # Add 2 to length to compensate for missing title brackets and spaces
@@ -272,19 +270,34 @@ function Write-Separator {
     }
 }
 
-function ScaleNum($orig, $factor) {
-    $d = 0
-    if ($orig -match '\.(\d+)$') { $d = $Matches[1].Length }
-    
-    $scaled = [double]$orig * $factor
-    $formatted = $scaled.ToString("F$d")
-    
-    # If original was negative and new value is positive, replace '-' with space
-    if ($orig -match '^-' -and $scaled -ge 0) {
-        $formatted = " $formatted"  # Replace '-' with space
+function ScaleNum($orig, $factor, [switch]$ForceThreeDecimals) {
+    if ($ForceThreeDecimals) {
+        # Special case for eyeballs - always enforce 3 decimal places
+        $scaled = [double]$orig * $factor
+        $formatted = $scaled.ToString("0.000")
+        
+        # Handle negative-to-positive conversion
+        if ($orig -match '^-' -and $scaled -ge 0) {
+            $formatted = " $formatted"  # Replace '-' with space
+        }
+        
+        return $formatted
     }
-    
-    return $formatted
+    else {
+        # Original behavior for all other cases
+        $d = 0
+        if ($orig -match '\.(\d+)$') { $d = $Matches[1].Length }
+        
+        $scaled = [double]$orig * $factor
+        $formatted = $scaled.ToString("F$d")
+        
+        # If original was negative and new value is positive, replace '-' with space
+        if ($orig -match '^-' -and $scaled -ge 0) {
+            $formatted = " $formatted"
+        }
+        
+        return $formatted
+    }
 }
 
 function Get-UserSelection {
@@ -429,13 +442,13 @@ try {
         Write-Host "`n Like 5 seconds to use, Yeah Im pretty awesome ngl" -ForegroundColor DarkGray
         Write-Host "`n Anyway stop screwing around, you did this on purpose" -ForegroundColor DarkGray
         Read-AnyKey
-		exit 4
+        exit 4
     }
 } catch {
     Write-Host "`n ERROR: Cannot access '$qcFile'" -ForegroundColor Red
     Write-Host " Reason: $($_.Exception.Message)`n" -ForegroundColor Yellow
     Read-AnyKey
-	exit 5
+    exit 5
 }
 
 # ------------------------------
@@ -539,6 +552,26 @@ while ($true) {
         continue
     }
     break
+}
+
+# Warning because I'm too lazy to add another marker system just for this rare case
+if ([math]::Abs($scale) -lt 0.025) {
+    Write-Host ""
+    Write-Separator -Title "WHOOP WHOOP! TOO LOW! TERRAIN! PULL UP!" -Char '☺' -Length 50 -Color Red
+    Write-Host " You're scaling to " -NoNewline
+    Write-Host $scale -ForegroundColor Yellow -NoNewline
+    Write-Host "? Seriously? Why?"
+    Write-Host "`n Tiny differences might appear if you scale back up"
+    Write-Host " This is probably Trump's fault or something, sorry"
+    Write-Separator -Length 50 -Color Red
+    
+    $resp = Get-YesNoResponse "`n Continue with ridiculous scaling anyway? (y/n) "
+    if ($resp.ToLower() -ne 'y') {
+        Write-Host "`n Just kidding, I'll let you continue anyway" -ForegroundColor Yellow
+    }
+    Write-Host "`n This only affects eyeballs (negligibly)" -ForegroundColor DarkGray
+    Write-Host " The VRD markers will prevent rounding errors" -ForegroundColor DarkGray
+    Write-Host " I just wanted to make another funny warning :^)" -ForegroundColor DarkGray
 }
 
 $relativeScale = $scale / $originalScale
@@ -698,11 +731,11 @@ if ($eyeballCount -gt 0) {
                 $Matches['diam'], $Matches['angle'], $Matches['irisScale']
             
             # Scale all relevant parameters
-            $newX = ScaleNum $Matches['x'] $relativeScale
-            $newY = ScaleNum $Matches['y'] $relativeScale
-            $newZ = ScaleNum $Matches['z'] $relativeScale
-            $newDiam = ScaleNum $Matches['diam'] $relativeScale
-            $newIris = ScaleNum $Matches['irisScale'] $relativeScale
+            $newX = ScaleNum $Matches['x'] $relativeScale -ForceThreeDecimals
+            $newY = ScaleNum $Matches['y'] $relativeScale -ForceThreeDecimals
+            $newZ = ScaleNum $Matches['z'] $relativeScale -ForceThreeDecimals
+            $newDiam = ScaleNum $Matches['diam'] $relativeScale -ForceThreeDecimals
+            $newIris = ScaleNum $Matches['irisScale'] $relativeScale -ForceThreeDecimals
 
             # Create new line (trimmed text entries)
             $newDisplay = "{0} {1} {2} {3}  {4}  {5}  {6}" -f `
@@ -723,7 +756,7 @@ if ($eyeballCount -gt 0) {
 
             if (-not $eyeballWarningShown) {
                 Write-Host ""
-                Write-Separator -Title "NOTICE: Eyeballs Detected" -Char '!' -Length 50 -Color Yellow
+                Write-Separator -Title "NOTICE: Eyeballs Detected" -Char '─' -Length 50 -Color DarkCyan
                 Write-Host " Found $eyeballCount eyeball definition(s), see below for changes"
                 Write-Host "`n If model uses " -NoNewline
                 Write-Host -ForegroundColor Yellow '$RaytraceSphere 1' -NoNewline
@@ -739,15 +772,17 @@ if ($eyeballCount -gt 0) {
         }
     }
     
-    # Display changes
+    # Display changes - showing only 2 decimals
     Write-Separator -Title "Eyeball Parameters" -Length 50 -Color DarkCyan
-    Write-Host "          Name       X     Y     Z    Dia Ang Iris"
+    Write-Host "         Name       X     Y    Z    Dia   Ang   Iris"
     foreach ($change in $changes) {
+        $displayOriginal = $change.Original -replace '(\d+\.\d{2})\d+','$1'
+        $displayModified = $change.Modified -replace '(\d+\.\d{2})\d+','$1'
         Write-Host ""
-        Write-Host " Old:  " -NoNewline -ForegroundColor DarkGray
-        Write-Host $change.Original -ForegroundColor DarkGray
-        Write-Host " New:  " -NoNewline
-        Write-Host $change.Modified
+        Write-Host " Old: " -NoNewline -ForegroundColor DarkGray
+        Write-Host $displayOriginal -ForegroundColor DarkGray
+        Write-Host " New: " -NoNewline
+        Write-Host $displayModified
         Write-Host ""
     }
     Write-Separator -Title "" -Length 50 -Color DarkCyan
@@ -862,43 +897,64 @@ if ($resp -eq 'y') {
 if (-not $hasVrd) {
     Write-Host "`n QC updated; no VRD was processed."
 } else {
-    Write-Host ""
-    Write-Separator -Title "VRD File Processing" -Char '═' -Length 50 -Color Cyan
     $vrdRaw = Get-Content $vrdFile -Raw
     $vrdContent = $vrdRaw.TrimEnd("`r","`n")
     $lineEnding = if ($vrdRaw -match "`r`n") { "`r`n" } else { "`n" }
 
-    # Markers   # IMPORTANT: When markers exist, CURRENT VALUES ARE IGNORED COMPLETELY, scaling always uses original marked values × new scale factor
+    # Markers # IMPORTANT: When markers exist, CURRENT VALUES ARE IGNORED COMPLETELY, scaling always uses original marked values × new scale factor
     $markerBasepos = "// Listed below are the original <basepos> and <trigger> translation values qc_scale_tool found on first run, normalized to `$scale 1"
     $parenthetical = "// If these are not correct, remove all of these comments and run the tool again with values that match the `$scale set in the QC`n"
 
     # Data structures
-    $currentHelper = ""   # -----------------------------------------------
-    $origBasepos = @{}    # helper → [origX,origY,origZ]
-    $origTriggers = @{}   # helper → ordered list of @(origTx,origTy,origTz)
-    $newLines = @()       # -----------------------------------------------
-
-    # First pass - collect original values from markers when present, otherwise assume current values represent $scale 1
+    $currentHelper = ""
+    $origBasepos = @{}
+    $origTriggers = @{}
+    $newLines = @()
     $allLines = $vrdContent -split "`r?`n"
     $isFirstRun = $vrdContent -notmatch [regex]::Escape($markerBasepos)
 
-    if ($isFirstRun) {
-        # ---------------------------------------------------------------
-        # First-time run → Capture originals values as normalized markers
-        # ---------------------------------------------------------------
-        Write-Host "`n No prior scales detected - Recording original values"
-        Write-Host "`n Make sure the VRD had the correct translation values"
-        Write-Host " for the previously set scale before you ran the tool"
-    } else {
-        # -----------------------------------------------
-        # Subsequent runs → Re-scale using stored markers
-        # -----------------------------------------------
-        Write-Host "`n Detected previously scaled VRD - Applying new scale"
+    $hasTriggerLines = $false
+    $hasNonZeroTriggers = $false
+    $inCommentBlock = $false
+
+    # First pass - detect trigger presence and values
+    foreach ($line in $allLines) {
+        # Skip comments
+        if (Test-IsCommented -Line $line -CommentBlockState ([ref]$inCommentBlock)) {
+            continue
+        }
+
+        if ($line -match '<trigger>') {
+            $hasTriggerLines = $true
+            
+            # Check if this is a trigger with non-zero values
+            if ($line -match $RegexPatterns.TriggerLine) {
+                $tx = [double]$Matches[2]
+                $ty = [double]$Matches[3]
+                $tz = [double]$Matches[4]
+                
+                if ($tx -ne 0 -or $ty -ne 0 -or $tz -ne 0) {
+                    $hasNonZeroTriggers = $true
+                    # No need to keep checking if we find one
+                    break
+                }
+            }
+        }
     }
 
+    # First pass - read markers or capture originals
     foreach ($line in $allLines) {
-        # Skip existing marker lines on subsequent runs
-        if (-not $isFirstRun -and ($line -match $RegexPatterns.OrigBaseposMarker -or $line -match $RegexPatterns.OrigTriggerMarker)) {
+        # Read existing markers (all runs)
+        if ($line -match $RegexPatterns.OrigBaseposMarker) {
+            $origBasepos[$Matches[1]] = @($Matches[2], $Matches[3], $Matches[4])
+            continue
+        }
+        if ($line -match $RegexPatterns.OrigTriggerMarker) {
+            $helperName = $Matches[1]
+            if (-not $origTriggers.ContainsKey($helperName)) {
+                $origTriggers[$helperName] = @()
+            }
+            $origTriggers[$helperName] += ,@($Matches[3], $Matches[4], $Matches[5])
             continue
         }
 
@@ -912,40 +968,38 @@ if (-not $hasVrd) {
             continue
         }
 
-        # Capture original <basepos> values (normalized to $scale 1)
-        if ($line -match $RegexPatterns.BaseposLine) {
-            $origX = $Matches[2]
-            $origY = $Matches[3]
-            $origZ = $Matches[4]
-            
-            $origBasepos[$currentHelper] = @(
-                (ScaleNum $origX (1/$originalScale)),
-                (ScaleNum $origY (1/$originalScale)), 
-                (ScaleNum $origZ (1/$originalScale)))
-            continue
-        }
-
-        # Capture original <trigger> values (normalized to $scale 1)
-        if ($line -match $RegexPatterns.TriggerLine) {
-            $origTx = $Matches[2]
-            $origTy = $Matches[3]
-            $origTz = $Matches[4]
-            
-            $origTriggers[$currentHelper] += ,@(
-                (ScaleNum $origTx (1/$originalScale)),
-                (ScaleNum $origTy (1/$originalScale)), 
-                (ScaleNum $origTz (1/$originalScale)))
-            continue
+        # Capture originals (first run only)
+        if ($isFirstRun) {
+            if ($line -match $RegexPatterns.BaseposLine) {
+                $origX = $Matches[2]
+                $origY = $Matches[3]
+                $origZ = $Matches[4]
+                $origBasepos[$currentHelper] = @(
+                    (ScaleNum $origX (1/$originalScale)),
+                    (ScaleNum $origY (1/$originalScale)),
+                    (ScaleNum $origZ (1/$originalScale)))
+                continue
+            }
+            if ($line -match $RegexPatterns.TriggerLine) {
+                $origTx = $Matches[2]
+                $origTy = $Matches[3]
+                $origTz = $Matches[4]
+                $origTriggers[$currentHelper] += ,@(
+                    (ScaleNum $origTx (1/$originalScale)),
+                    (ScaleNum $origTy (1/$originalScale)),
+                    (ScaleNum $origTz (1/$originalScale)))
+                continue
+            }
         }
     }
 
-    # Second pass - process lines and apply new scale
+    # Second pass - apply scaling
     $currentHelper = ""
-    $triggerIndices = @{} # Helper → current trigger index
+    $triggerIndices = @{}
     $newLines = @()
-    $hasBasepos = $false  # Initialize tracking variable
+    $hasBasepos = $false
 
-    foreach ($line in $allLines) { # Detect helper context
+    foreach ($line in $allLines) {
         if ($line -match $RegexPatterns.HelperLine) {
             $currentHelper = $Matches[1]
             $triggerIndices[$currentHelper] = 0
@@ -953,44 +1007,32 @@ if (-not $hasVrd) {
             continue
         }
 
-        # Process <basepos> lines using original values from markers
-        if ($line -match $RegexPatterns.BaseposLine) {
-            if ($line -match $RegexPatterns.OrigBaseposMarker) {
-                # This is a marker line - leave it exactly as-is
-                $newLines += $line
-            }
-            elseif ($origBasepos.ContainsKey($currentHelper)) {
-                # This is an actual basepos line - scale it
-                $vals = $origBasepos[$currentHelper]
-                $newX = ScaleNum $vals[0] $scale
-                $newY = ScaleNum $vals[1] $scale
-                $newZ = ScaleNum $vals[2] $scale
-                $newLines += "$($Matches[1])<basepos>     $newX         $newY         $newZ$($Matches[5])"
-                $hasBasepos = $true  # Mark that we found at least one basepos
-                continue
-            }
+        # Scale basepos using original values
+        if ($line -match $RegexPatterns.BaseposLine -and $origBasepos.ContainsKey($currentHelper)) {
+            $vals = $origBasepos[$currentHelper]
+            $newX = ScaleNum $vals[0] $scale
+            $newY = ScaleNum $vals[1] $scale
+            $newZ = ScaleNum $vals[2] $scale
+            $newLines += "$($Matches[1])<basepos>     $newX         $newY         $newZ$($Matches[5])"
+            $hasBasepos = $true
+            continue
         }
 
-        # Process <trigger> lines using original values from markers (maintains original order via index tracking)
-        if ($line -match $RegexPatterns.TriggerLine) {
-            if ($line -match $RegexPatterns.OrigTriggerMarker) {
-                # This is a marker line - leave it exactly as-is
-                $newLines += $line
-            }
-            elseif ($origTriggers.ContainsKey($currentHelper)) {
-                # This is an actual trigger line - scale it
-                $vals = $origTriggers[$currentHelper][$triggerIndices[$currentHelper]]
-                $newTx = ScaleNum $vals[0] $scale
-                $newTy = ScaleNum $vals[1] $scale
-                $newTz = ScaleNum $vals[2] $scale
-                $newLines += "$($Matches[1]) $newTx $newTy $newTz$($Matches[5])"
-                $triggerIndices[$currentHelper]++
-                continue
-            }
-        } $newLines += $line
+        # Scale triggers using original values
+        if ($line -match $RegexPatterns.TriggerLine -and $origTriggers.ContainsKey($currentHelper)) {
+            $vals = $origTriggers[$currentHelper][$triggerIndices[$currentHelper]]
+            $newTx = ScaleNum $vals[0] $scale
+            $newTy = ScaleNum $vals[1] $scale
+            $newTz = ScaleNum $vals[2] $scale
+            $newLines += "$($Matches[1]) $newTx $newTy $newTz$($Matches[5])"
+            $triggerIndices[$currentHelper]++
+            continue
+        }
+
+        $newLines += $line
     }
 
-    # Only add markers if this was first run (subsequent runs preserve existing markers)
+    # Add markers (first run only)
     if ($isFirstRun -and $origBasepos.Count -gt 0) {
         if ($newLines[-1] -ne "") { $newLines += "" }
         $newLines += $markerBasepos
@@ -1012,29 +1054,54 @@ if (-not $hasVrd) {
         }
     }
 
-    if (-not $hasBasepos -and $hasVrd) {
+    # Output results
+    [System.IO.File]::WriteAllText($vrdFile, ($newLines -join $lineEnding), $utf8NoBOM)
+    
+    # Show summary
+    Write-Host ""
+    Write-Separator -Title "VRD File Processing" -Char '═' -Length 50 -Color Cyan
+    if ($isFirstRun -and $hasBasepos) {
+        Write-Host "`n No VRD markers detected - Recording original values"
+        Write-Host "`n Make sure the VRD had the correct translation values"
+        Write-Host " for the previously set scale before you ran the tool"
+    } elseif ($hasBasepos) {
+        Write-Host "`n Detected existing VRD markers - Applying new scale"
+    }
+
+    if (-not $hasBasepos) {
         Write-Host ""
         Write-Separator -Title "WARNING: NO BASEPOS FOUND" -Char '!' -Length 50 -Color Red
-        Write-Host " No valid <basepos> entries exist within the VRD file"
+        Write-Host " No valid <basepos> entries were found within the VRD"
+        Write-Host "`n        Do you even know what this file is for?" -ForegroundColor DarkGray
         Write-Separator -Length 50 -Color Red
     }
-
     $totalTriggers = 0
-    foreach ($helper in $origTriggers.Keys) {
-        foreach ($trigger in $origTriggers[$helper]) { # Only count non-zero triggers
-            if ([double]$trigger[0] -ne 0 -or [double]$trigger[1] -ne 0 -or [double]$trigger[2] -ne 0) { $totalTriggers++ }
-        }
-    }
-    if ($totalTriggers -eq 0 -and $hasVrd) {
+	# Now count non-zero triggers from our collected data
+	foreach ($helper in $origTriggers.Keys) {
+		foreach ($trigger in $origTriggers[$helper]) {
+			if ([double]$trigger[0] -ne 0 -or [double]$trigger[1] -ne 0 -or [double]$trigger[2] -ne 0) { 
+				$totalTriggers++ 
+			}
+		}
+	}
+    # Output appropriate messages
+    if (-not $hasTriggerLines) {
         Write-Host ""
-        Write-Separator -Title "WARNING: NO TRIGGERS FOUND" -Char '!' -Length 50 -Color Red
-        Write-Host " No valid <trigger> entries exist within the VRD file"
-        Write-Separator -Length 50 -Color Red
+        Write-Separator -Title "NOTICE: NO TRIGGER DEFINITIONS" -Char '!' -Length 50 -Color Yellow
+        Write-Host "    No valid <trigger> lines were found in the VRD"
+        Write-Host "`n         Why do you even have a VRD file?" -ForegroundColor DarkGray
+        Write-Separator -Length 50 -Color Yellow
+    }
+    elseif ($hasBasepos -and -not $hasNonZeroTriggers) {
+        Write-Host ""
+        Write-Separator -Title "NOTICE: ALL TRIGGER TRANSLATIONS ZERO" -Char '!' -Length 50 -Color Yellow
+        Write-Host " Found <trigger> lines but all translations are 0 0 0"
+        Write-Host "`n No action will be taken, rotations don't need scale" -ForegroundColor DarkGray
+        Write-Separator -Length 50 -Color Yellow
     }
 
-    [System.IO.File]::WriteAllText($vrdFile, ($newLines -join $lineEnding), $utf8NoBOM)
-
-    if (-not $hasBasepos -and $totalTriggers -eq 0) {
+    # Final summary
+    if (-not $hasBasepos -and -not $hasTriggerLines) {
         Write-Host "`n    Try using an actual VRD file next time genius" -ForegroundColor DarkRed
     }
     else {
@@ -1042,36 +1109,47 @@ if (-not $hasVrd) {
         if ($hasBasepos) { $messageParts += "<basepos>" }
         if ($totalTriggers -gt 0) { $messageParts += "$totalTriggers <trigger>" }
         
-        Write-Host "`n $($messageParts -join ' and ') translations scaled x" -NoNewline
-        Write-Host $scaleFactor -ForegroundColor Yellow
+        if ($messageParts.Count -gt 0) {
+            Write-Host "`n $($messageParts -join ' and ') translations scaled x" -NoNewline
+            Write-Host $scaleFactor -ForegroundColor Yellow
+        }
     }
 }
 
 Write-Host ""
-$completionMessages = @(
-    @{Text="K THX BAI"; Color="Green"},
-    @{Text="THANKS, AND HAVE FUN"; Color="Gray"},
-    @{Text="A WINNER IS YOU!"; Color="Green"},
-    @{Text="HOLY CRAP LOIS DIS IS FRIGGIN SWEET"; Color="DarkGray"},
-    @{Text="WE'LL BANG OKAY?"; Color="Red"},
-    @{Text="HAAAAAAAAAAAAAX!!!!!"; Color="DarkCyan"},
-    @{Text="PSST, ITS FREE REAL ESTATE"; Color="DarkCyan"},
-    @{Text="WELL EXCUUUUUUUUUUSE ME PRINCESS!"; Color="DarkGreen"},
-    @{Text="MATCH BEGINS IN 60 SECONDS"; Color="Yellow"},
-    @{Text="ITS A SECRET TO EVERYBODY"; Color="Blue"},
-    @{Text="I'M REALLY FEELING IT!"; Color="Red"},
-    @{Text="THE CAKE IS A LIE"; Color="Red"},
-    @{Text="DON'T FORGET TO BUY CAPTAIN TOAD!"; Color="Yellow"},
-    @{Text="hi every1 im new!!!!!!! *holds up spork*"; Color="Magenta"},
-    @{Text="RISE AND SHINE MR FREEMAN"; Color="DarkGray"},
-    @{Text="PICK UP THAT CAN"; Color="DarkGray"},
-    @{Text="SHREK IS LOVE, SHREK IS LIFE"; Color="Green"},
-    @{Text="TELL ME ABOUT BANE, WHY DOES HE WEAR THE MASK?"; Color="DarkGray"},
-    @{Text="like favorite subscribe :)"; Color="Red"},
-    @{Text="[VGS] SHAZBOT!"; Color="DarkCyan"},
-    @{Text="HOPEFULLY IT WILL HAVE BEEN WORTH THE WAIT"; Color="Gray"},
-    @{Text="ALL YOUR BASE ARE BELONG TO US"; Color="Yellow"}
+$msgData = @(
+    '4B2054485820424149|477265656E',
+    '5448414E4B532C20414E4420484156452046554E|47726179',
+    '412057494E4E455220495320594F5521|477265656E',
+    '484F4C592043524150204C4F495320444953204953204652494747494E205357454554|4461726B47726179',
+    '5745274C4C2042414E47204F4B41593F|526564',
+    '484141414141414141414141582121212121|4461726B4379616E',
+    '505353542C204954532046524545205245414C20455354415445|4461726B4379616E',
+    '57454C4C204558435555555555555545204D45205052494E4345535321|4461726B477265656E',
+    '4D4154434820424547494E5320494E203630205345434F4E4453|59656C6C6F77',
+    '49545320412053454352455420544F204556455259424F4459|426C7565',
+    '49274D205245414C4C59204645454C494E4720495421|526564',
+    '5448452043414B452049532041204C4945|526564',
+    '444F4E275420464F5247455420544F20425559204341505441494E20544F414421|59656C6C6F77',
+    '68692065766572793120696D206E6577212121212121202A686F6C64732075702073706F726B2A|4D6167656E7461',
+    '5249534520414E44205348494E45204D5220465245454D414E|4461726B47726179',
+    '5049434B20555020544841542043414E|4461726B47726179',
+    '534852454B204953204C4F56452C20534852454B204953204C494645|477265656E',
+    '54454C4C204D452041424F55542042414E452C2057485920444F4553204845205745415220544845204D41534B3F|4461726B47726179',
+    '6C696B65206661766F7269746520737562736372696265203A29|526564',
+    '5B5647535D205348415A424F5421|4461726B4379616E',
+    '484F504546554C4C592049542057494C4C2048415645204245454E20574F525448205448452057414954|47726179',
+    '414C4C20594F55522042415345204152452042454C4F4E4720544F205553|59656C6C6F77',
+    '4550535445494E204449444E2754204B494C4C2048494D53454C46|4461726B526564'
 )
+
+$completionMessages = foreach ($item in $msgData) {
+    $parts = $item -split '\|'
+    @{
+        Text = -join ($parts[0] -split '(..)' -ne '' | ForEach-Object { [char][Convert]::ToByte($_, 16) })
+        Color = -join ($parts[1] -split '(..)' -ne '' | ForEach-Object { [char][Convert]::ToByte($_, 16) })
+    }
+}
 
 # Need to save file with UTF-8-BOM encoding for these to display properly
 $toucan = @"
@@ -1146,12 +1224,13 @@ switch (Get-Random -Minimum 1 -Maximum 101) {
         exit 0
     }
     { $_ -le 5 } {  # Also 1% (it is a mystery 👻)
-        Write-Separator -Title "$($r -join '')" -Length 50 -Color DarkRed
+        $secretMsg = $completionMessages[-1]
+        Write-Separator -Title $secretMsg.Text -Length 50 -Color $secretMsg.Color
         Read-AnyKey
         exit 0
     }
-    default {  # 95% Generic Messages
-        $randomMessage = $completionMessages | Get-Random
+    default {  # 95% Regular messages
+        $randomMessage = $completionMessages[0..($completionMessages.Count-2)] | Get-Random
         Write-Separator -Title $randomMessage.Text -Length 50 -Color $randomMessage.Color
     }
 }
