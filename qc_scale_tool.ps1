@@ -1,6 +1,7 @@
 ﻿<#
 .SYNOPSIS
-   Applies uniform scaling to QC model definitions and optionally VRD helper positions, with idiot-proof interface.
+   Automatically inserts $scale in a QC and recalculates all values in the QC and VRD to match it, with idiot-proof interface.
+   Targets parameters that are not affected by $scale: Eyeball values, VRD <basepos>, and VRD <trigger> translations
 
 .DESCRIPTION
    This script does the following:
@@ -14,27 +15,26 @@
       - Validates basename match with QC unless overridden
       - First run: Captures original <basepos> and <trigger> translations as reference values
       - All runs: Applies mathematically precise scaling while:
-         • Maintaining original decimal precision
-         • Preserving helper/trigger relationships
-         • Tracking originals in commented metadata blocks
+         • Maintains original decimal precision
+         • Preserves helper/trigger relationships
+         • Tracks originals in commented metadata blocks
 
    3. Model Naming Adjustment:
-      - Optional suffix application to $modelname's .mdl reference
-      - Handles both quoted and unquoted paths
-      - Special case: Scale=1 reverts to baseline filename
-      - Preserves directory structure in all cases
+      - Optional suffix application to $modelname
+      - Special case: $scale 1 reverts to baseline filename
 
    Key Technical Behaviors:
-   - All numeric scaling preserves original decimal and whitespacing
+   - Mostly preserves original decimal and whitespacing
    - VRD processing maintains trigger order indices
    - QC modifications are done with line-ending awareness
    - Comprehensive REGEX patterns handle diverse formatting scenarios
-   - User notifications to take manual action for $EyeballRadius and VTA files
-   - Interactive prompts to validate all user inputs
+   - User notifications for nearly any scenario
+   - Interactive prompts validate all user inputs
 .NOTES
     Made by Taco with Godless Communist AI
     https://github.com/Blaco/qc_scale_tool
-    Probably works on Mac/Linux...probably
+    Made in Powershell 5.1+ (works fine on Windows 10)
+	Probably works on Mac/Linux...probably
 #>
 
 # -----------------------------
@@ -53,71 +53,79 @@ $ConsoleConfig = @{
         Warning = "Yellow"
         Debug = "Cyan"
     }
-    CursorSize = 25
 }
 
 try {
-    # Set window title (universally supported)
+    # -------------------------------------------------------------------------
+    # STEP 1: WINDOW RESIZE
+    # -------------------------------------------------------------------------
     $Host.UI.RawUI.WindowTitle = $ConsoleConfig.Title
-
-    # Detect environment capabilities
-    $CanResize = $Host.UI -and $Host.UI.RawUI -and 
-                ($Host.Name -eq "ConsoleHost" -or $Host.Name -eq "DefaultHost")
-    $IsModernTerminal = $env:WT_SESSION -or $env:VSCODE_PID -or $env:TERM_PROGRAM
-
-    # Window sizing (only in legacy console hosts)
-    if ($CanResize -and !$IsModernTerminal) {
-        try {
-            # Set buffer first (must be >= window size)
-            $Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size(
-                [Math]::Max($ConsoleConfig.BufferWidth, $ConsoleConfig.WindowWidth),
-                $ConsoleConfig.BufferHeight
-            )
-            
-            # Set window dimensions
-            $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size(
-                $ConsoleConfig.WindowWidth,
-                $ConsoleConfig.WindowHeight
-            )
-        } catch {
-            Write-Debug "Console resize failed: $_"
+    
+    if ($Host.UI -and $Host.UI.RawUI -and 
+        ($Host.Name -match "ConsoleHost|DefaultHost") -and
+        (-not $env:WT_SESSION) -and (-not $env:VSCODE_PID)) {
+        
+        # Set buffer first
+        $Host.UI.RawUI.BufferSize = New-Object System.Management.Automation.Host.Size(
+            [Math]::Max($ConsoleConfig.BufferWidth, $ConsoleConfig.WindowWidth),
+            $ConsoleConfig.BufferHeight
+        )
+        
+        # Window size set IMMEDIATELY after
+        $Host.UI.RawUI.WindowSize = New-Object System.Management.Automation.Host.Size(
+            $ConsoleConfig.WindowWidth,
+            $ConsoleConfig.WindowHeight
+        )
+        
+        # Emergency fallback if PowerShell method fails (I think?)
+        if ($Host.UI.RawUI.WindowSize.Width -ne $ConsoleConfig.WindowWidth) {
+            $null = cmd /c "mode con: cols=$($ConsoleConfig.WindowWidth) lines=$($ConsoleConfig.WindowHeight)"
         }
     }
-    elseif ($IsModernTerminal) {
-        Write-Verbose "Manual resize recommended: ${$ConsoleConfig.WindowWidth}x${$ConsoleConfig.WindowHeight}" -Verbose
+
+    # -------------------------------------------------------------------------
+    # STEP 2: MODERN TERMINAL DETECTION
+    # -------------------------------------------------------------------------
+    if ($env:WT_SESSION -or $env:VSCODE_PID) {
+        Write-Verbose "Modern terminal detected - could not resize window :(" -Verbose
     }
 
-    # Color configuration (with fallbacks)
-    try { [Console]::ResetColor() } catch { Write-Debug "Color reset failed" }
-    
-    if ($Host.UI -and $Host.UI.RawUI) {
+    # -------------------------------------------------------------------------
+    # STEP 3: COLOR CONFIGURATION
+    # -------------------------------------------------------------------------
+    if (-not [Console]::IsOutputRedirected) {
         try {
-            $Host.UI.RawUI.BackgroundColor = $ConsoleConfig.Colors.Background
-            $Host.UI.RawUI.ForegroundColor = $ConsoleConfig.Colors.Foreground
-        } catch { Write-Debug "UI colors not supported" }
+            # Native console colors first
+            [Console]::BackgroundColor = [ConsoleColor]::Black
+            [Console]::ForegroundColor = [ConsoleColor]::White
+            
+            # PowerShell host colors as fallback
+            if ($Host.UI -and $Host.UI.RawUI) {
+                $Host.UI.RawUI.BackgroundColor = $ConsoleConfig.Colors.Background
+                $Host.UI.RawUI.ForegroundColor = $ConsoleConfig.Colors.Foreground
+            }
+        } catch {
+            # ANSI fallback for modern terminals
+            Write-Host "`e[40m`e[37m" -NoNewline
+        }
     }
 
-    # Error preference colors
-    if ($Host.PrivateData) {
+    # -------------------------------------------------------------------------
+    # STEP 4: ERROR COLOR PREFERENCES
+    # -------------------------------------------------------------------------
+    if ($Host.PrivateData -and (-not [Console]::IsOutputRedirected)) {
         $Host.PrivateData.ErrorForegroundColor = $ConsoleConfig.Colors.Error
         $Host.PrivateData.WarningForegroundColor = $ConsoleConfig.Colors.Warning
         $Host.PrivateData.DebugForegroundColor = $ConsoleConfig.Colors.Debug
     }
 
-    # Cursor configuration (multi-layer fallback)
-    try {
-        $Host.UI.RawUI.CursorSize = $ConsoleConfig.CursorSize
-    } catch {
-        try { [Console]::CursorSize = $ConsoleConfig.CursorSize } catch {
-            Write-Debug "Cursor size configuration not supported"
-        }
-    }
-
 } catch {
     Write-Debug "Console configuration error: $_"
 } finally {
-    # Always clear host if interactive
-    if ($Host.Name -ne 'Default Host') {
+    # -------------------------------------------------------------------------
+    # FINAL CLEAR (ONLY IF INTERACTIVE)
+    # -------------------------------------------------------------------------
+    if (($Host.Name -ne 'Default Host') -and (-not [Console]::IsOutputRedirected)) {
         Clear-Host
     }
 }
@@ -148,7 +156,8 @@ if (-not $PSVersionTable.PSEdition -or
 
     try { [System.Console]::ReadKey($true) | Out-Null } 
     catch { Read-Host " Press Enter to exit" | Out-Null }
-    exit 1
+	try { $host.SetShouldExit(1) } catch { }
+	[Environment]::Exit(1)
 }
 
 # ----------------------
@@ -167,7 +176,8 @@ trap {
     Write-Host " Command: $($_.InvocationInfo.Line.Trim())"
     try { [System.Console]::ReadKey($true) | Out-Null } 
     catch { Read-Host " Press Enter to exit" | Out-Null }
-    exit $EXIT_GENERAL_ERROR
+	try { $host.SetShouldExit($EXIT_GENERAL_ERROR) } catch { }
+	[Environment]::Exit($EXIT_GENERAL_ERROR)
 }
 
 # -----------------------------
@@ -411,6 +421,25 @@ function Read-AnyKey {
     }
 }
 
+function Exit-Script {
+    param([int]$ExitCode = 0)
+    
+    try {
+        # First try clean exit
+        exit $ExitCode
+    }
+    catch {
+        try {
+            # Fallback for Linux/macOS with older PowerShell
+            [Environment]::Exit($ExitCode)
+        }
+        catch {
+            # Last resort
+            $host.SetShouldExit($ExitCode)
+            return
+        }
+    }
+}
 # ----------------------------------
 # 1) Gather QC files (must have ≥ 1)
 # ----------------------------------
@@ -420,7 +449,7 @@ if ($qcItems.Count -eq 0) {
     Write-Host "$(Get-Location)" -ForegroundColor Cyan
     Write-Host "`n Place this script in a folder containing .qc files.`n" -ForegroundColor Yellow
     Read-AnyKey
-    exit 3
+    Exit-Script -ExitCode 3
 }
 
 Write-Host ""
@@ -442,13 +471,13 @@ try {
         Write-Host "`n Like 5 seconds to use, Yeah Im pretty awesome ngl" -ForegroundColor DarkGray
         Write-Host "`n Anyway stop screwing around, you did this on purpose" -ForegroundColor DarkGray
         Read-AnyKey
-        exit 4
+        Exit-Script -ExitCode 4
     }
 } catch {
     Write-Host "`n ERROR: Cannot access '$qcFile'" -ForegroundColor Red
     Write-Host " Reason: $($_.Exception.Message)`n" -ForegroundColor Yellow
     Read-AnyKey
-    exit 5
+    Exit-Script -ExitCode 5
 }
 
 # ------------------------------
@@ -481,14 +510,14 @@ else { # Get QC basename for matching
             Read-AnyKey
             Write-Host "`n Okay now you can go" -ForegroundColor DarkGray
             Read-AnyKey
-            exit 4
+            Exit-Script -ExitCode 4
         }
     }
     catch {
         Write-Host "`n ERROR: Cannot access '$vrdFile'" -ForegroundColor Red
         Write-Host " Reason: $($_.Exception.Message)`n" -ForegroundColor Yellow
         Read-AnyKey
-        exit 5
+        Exit-Script -ExitCode 5
     }
 
     $vrdBaseName = [System.IO.Path]::GetFileNameWithoutExtension($vrdFile)
@@ -624,7 +653,7 @@ if ($hasVTA) {
     if ($resp.ToLower() -ne 'y') {
         Write-Host "`n Scaling aborted by user." -ForegroundColor Yellow
         Read-AnyKey
-        exit 2
+        Exit-Script -ExitCode 2
     }
 }
 
@@ -1020,12 +1049,27 @@ if (-not $hasVrd) {
 
         # Scale triggers using original values
         if ($line -match $RegexPatterns.TriggerLine -and $origTriggers.ContainsKey($currentHelper)) {
-            $vals = $origTriggers[$currentHelper][$triggerIndices[$currentHelper]]
-            $newTx = ScaleNum $vals[0] $scale
-            $newTy = ScaleNum $vals[1] $scale
-            $newTz = ScaleNum $vals[2] $scale
-            $newLines += "$($Matches[1]) $newTx $newTy $newTz$($Matches[5])"
-            $triggerIndices[$currentHelper]++
+            try {
+                $vals = $origTriggers[$currentHelper][$triggerIndices[$currentHelper]]
+                $newTx = ScaleNum $vals[0] $scale
+                $newTy = ScaleNum $vals[1] $scale
+                $newTz = ScaleNum $vals[2] $scale
+                $newLines += "$($Matches[1]) $newTx $newTy $newTz$($Matches[5])"
+                $triggerIndices[$currentHelper]++
+            } catch {
+                Write-Host ""
+                Write-Separator -Title "ERROR: INVALID VRD MARKERS" -Char '!' -Length 50 -Color Red
+                Write-Host " Did you edit your VRD after using the scale tool?" -ForegroundColor Yellow
+                Write-Host " Im not gonna add code to handle this, heres the fix:" -ForegroundColor Yellow
+                Write-Host " 1. Open your VRD file and scroll to the bottom"
+                Write-Host " 2. Delete ALL // comment lines created by scale tool"
+                Write-Host " 3. Reset the scale in your QC to match the VRD"
+                Write-Host " 4. Run this tool again"
+                Write-Separator -Length 50 -Color Red
+				Write-Host " QC scaled, VRD failed.  :^(   Press any key to exit.`n"
+				Read-AnyKey
+				Exit-Script -ExitCode 0
+            }
             continue
         }
 
@@ -1084,12 +1128,12 @@ if (-not $hasVrd) {
 			}
 		}
 	}
-    # Output appropriate messages
+    # Annoy user if they did something dumb
     if (-not $hasTriggerLines) {
         Write-Host ""
         Write-Separator -Title "NOTICE: NO TRIGGER DEFINITIONS" -Char '!' -Length 50 -Color Yellow
         Write-Host "    No valid <trigger> lines were found in the VRD"
-        Write-Host "`n         Why do you even have a VRD file?" -ForegroundColor DarkGray
+        Write-Host "`n           Why do you even have a VRD file?" -ForegroundColor DarkGray
         Write-Separator -Length 50 -Color Yellow
     }
     elseif ($hasBasepos -and -not $hasNonZeroTriggers) {
@@ -1099,11 +1143,10 @@ if (-not $hasVrd) {
         Write-Host "`n No action will be taken, rotations don't need scale" -ForegroundColor DarkGray
         Write-Separator -Length 50 -Color Yellow
     }
-
-    # Final summary
     if (-not $hasBasepos -and -not $hasTriggerLines) {
         Write-Host "`n    Try using an actual VRD file next time genius" -ForegroundColor DarkRed
     }
+	# Summary
     else {
         $messageParts = @()
         if ($hasBasepos) { $messageParts += "<basepos>" }
@@ -1125,9 +1168,9 @@ $msgData = @(
     '5745274C4C2042414E47204F4B41593F|526564',
     '484141414141414141414141582121212121|4461726B4379616E',
     '505353542C204954532046524545205245414C20455354415445|4461726B4379616E',
-    '57454C4C204558435555555555555545204D45205052494E4345535321|4461726B477265656E',
+    '57454C4C20455843555555555555555345204D452C205052494E4345535321|4461726B477265656E',
     '4D4154434820424547494E5320494E203630205345434F4E4453|59656C6C6F77',
-    '49545320412053454352455420544F204556455259424F4459|426C7565',
+    '4954275320412053454352455420544F204556455259424F4459|5768697465'
     '49274D205245414C4C59204645454C494E4720495421|526564',
     '5448452043414B452049532041204C4945|526564',
     '444F4E275420464F5247455420544F20425559204341505441494E20544F414421|59656C6C6F77',
@@ -1213,7 +1256,7 @@ switch (Get-Random -Minimum 1 -Maximum 101) {
         Write-Host $toucan -ForegroundColor Cyan
         Write-Host "`n               Press any key to PRAISE!" -NoNewline
         Read-AnyKey
-        exit 0
+        Exit-Script -ExitCode 0
     }
     { $_ -le 4 } {  # 1% Zelda
         Write-Host $triforce -ForegroundColor Yellow
@@ -1221,13 +1264,13 @@ switch (Get-Random -Minimum 1 -Maximum 101) {
         Write-Host "`n   DONE! PRESS ANY KEY TO EXIT!" -NoNewline
         Write-Host "(Ultra-rare end!)" -ForegroundColor Yellow
         Read-AnyKey
-        exit 0
+        Exit-Script -ExitCode 0
     }
     { $_ -le 5 } {  # Also 1% (it is a mystery 👻)
         $secretMsg = $completionMessages[-1]
         Write-Separator -Title $secretMsg.Text -Length 50 -Color $secretMsg.Color
         Read-AnyKey
-        exit 0
+        Exit-Script -ExitCode 0
     }
     default {  # 95% Regular messages
         $randomMessage = $completionMessages[0..($completionMessages.Count-2)] | Get-Random
@@ -1237,4 +1280,4 @@ switch (Get-Random -Minimum 1 -Maximum 101) {
 
 Write-Host "`n Done. Press any key to exit..." -NoNewline
 Read-AnyKey
-exit 0
+Exit-Script -ExitCode 0
