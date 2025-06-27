@@ -11,7 +11,7 @@ This tool allows you to automate this process and compile multiple copies of a m
 3. Compile and enjoy your newely scaled model produced in literally 10 seconds.
 
 
-# Notes:
+## Notes:
 - The tool will detect and warn you about VTA files and $EyeRadius, both of which must be scaled manually.
 - You will be given the option to append the new scale to the $modelname so when you compile it doesn't override your original .mdl
 - Be sure your VRD file has the correct values for the scale your QC is currently set to before first use.
